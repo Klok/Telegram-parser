@@ -65,10 +65,10 @@ def load_file(path_to_data, inp_filename):
                     result = pd.concat([result, data])
             except:
                 continue
-        return result.set_index('id')
+        return result
 
-def parse_files(path_to_data):
-    with open(os.path.join(path_to_data,'dataset.txt'), 'w', encoding='utf-8') as dataset:
+def parse_files(path_to_data, csv_name):
+    with open(os.path.join(path_to_data, csv_name), 'w', encoding='utf-8') as dataset:
         file_exist = True
         file_ids = []
         for (dirpath, dirnames, filenames) in os.walk(path_to_data):
@@ -77,7 +77,7 @@ def parse_files(path_to_data):
                     file_ids.append(file_name)
         for id in file_ids:
             try:
-                result = parser.load_file(path_to_data, id)
-                result.to_csv(dataset, mode='a')
+                result = load_file(path_to_data, id)
+                result.to_csv(dataset, sep='\t', index=False, mode='a', header=False)
             except:
                 print('Some nasty error occured in parse_files loop')
