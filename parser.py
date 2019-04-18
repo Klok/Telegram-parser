@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 from html.parser import HTMLParser
 
@@ -9,31 +10,36 @@ class TelegramHTMLParser(HTMLParser):
         self.convert_charrefs= True
         self.fed = pd.DataFrame({'id': '', 'name': '', 'text': '', 'time': ''}, index=[0])
         self.line_class = ''
+        self.old_name = ''
+        self.finished_flag = False
         self.restart_flag = False
         self.id_flag = False
         self.name_flag = False
         self.text_flag = False
         self.time_flag = False
         self.href_flag = False
-        self.integrity_flag = (not self.id_flag)&(not self.name_flag)&(not self.text_flag)&(not self.time_flag)&(not self.href_flag)
         self.forwarded_flag = False
     def reinitialize(self):
         # function triggers after all chunk data processed
         self.reset()
-        self.fed = pd.DataFrame({'id': '', 'name': self.fed.iloc[0]['name'], 'text': '', 'time': ''}, index=[0])
+        self.fed = pd.DataFrame({'id': '', 'name': self.old_name, 'text': '', 'time': ''}, index=[0])
+        self.finished_flag = False
         self.restart_flag = False
         self.forwarded_flag = False
     def get_data(self):
         # function to trigger for each line read
         # normal message condition
-        if (self.integrity_flag)&(not self.forwarded_flag)&(self.restart_flag):
-            output = self.fed
-            self.reinitialize()
-            return output
-        # forwarded message condition
-        elif (self.integrity_flag)&(self.forwarded_flag)&(self.restart_flag):
-            self.reinitialize()
-            return
+        if (self.finished_flag)&(not self.restart_flag):
+            if (not self.forwarded_flag):
+                output = self.fed
+                self.old_name = self.fed.loc[0]['name']
+                self.reinitialize()
+                return output
+            # forwarded message condition
+            else:
+                self.reinitialize()
+                print('forward declined')
+                return
         # not ready to start looking for the new chunk condition
         else:
             return
@@ -42,6 +48,12 @@ class TelegramHTMLParser(HTMLParser):
         d = d.strip()
         if d != '':
             if self.name_flag:
+                # check for messages via bots
+                if re.compile(r'\b({0})\b'.format('via')).search(d):
+                    self.old_name = d[0:d.find(' via')].strip()
+                    self.restart_flag = True
+                    self.name_flag = False
+                    return
                 self.fed.iloc[0]['name'] = d
                 self.name_flag = False
             elif self.text_flag:
@@ -57,6 +69,7 @@ class TelegramHTMLParser(HTMLParser):
         for attr in attrs:
             # check for specific data indicators in tags
             if (attr == ('class', 'message default clearfix'))|(attr == ('class', 'message default clearfix joined')):
+                self.reinitialize()
                 self.id_flag = True
                 # this attribute set still contains 'message' part so need to skip turn
                 continue
@@ -66,8 +79,13 @@ class TelegramHTMLParser(HTMLParser):
                 self.text_flag = True
             elif attr == ('class', 'pull_right date details'):
                 self.time_flag = True
-            elif attr == ('class', 'forwarded body'):
+            # check for unwanted tags
+            if attr == ('class', 'forwarded body'):
                 self.forwarded_flag = True
+                # temporary measure until forwarded messages are dealt with
+                self.restart_flag = True
+            elif attr == ('class', 'media_poll'):
+                self.restart_flag = True
             # get useful information from tags
             if (self.id_flag)&(attr[1].find('message') != -1):
                 self.fed.iloc[0]['id'] = attr[1].replace('message', '')
@@ -81,7 +99,8 @@ class TelegramHTMLParser(HTMLParser):
                 self.fed.iloc[0]['text'] = self.fed.iloc[0]['text'].strip()
                 self.text_flag = False
                 self.href_flag = False
-                self.restart_flag = True
+                self.finished_flag = True
+
 
 def load_file(path_to_data, inp_filename):
     with open(os.path.join(path_to_data, inp_filename), encoding='utf-8') as inp_html_file:
@@ -90,11 +109,7 @@ def load_file(path_to_data, inp_filename):
         for line in inp_html_file:
             parser.feed(line)
             data = parser.get_data()
-            try:
-                if data.iloc[0]['text'] != '':
-                    result = pd.concat([result, data])
-            except(AttributeError):
-                continue
+            result = pd.concat([result, data])
         return result
 
 def parse_files(path_to_data, csv_name):
